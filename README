@@ -1,0 +1,18 @@
+picasasync is a simple utility that allows you sync local directories
+containing digital photos to your picasa albums in the cloud.
+
+
+usage: picasasync.py [-h] [-d] [-v] local remote
+
+Sync directories with picasa
+
+positional arguments:
+  local          Local directory you'd like to sync
+  remote         Remote album to which you'd like to sync
+
+optional arguments:
+  -h, --help     show this help message and exit
+  -d, --dry-run  Only print what we would sync, don't actually sync
+  -v, --verbose  Be verbose
+
+by Mitchel Humpherys <mitch.special@gmail.com>
