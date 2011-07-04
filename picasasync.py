@@ -61,7 +61,26 @@ class GoogleCLHelper(object):
     """
     albums = None
     dry_run = False
-    
+
+
+    # symbolic index for the tuple returned by the
+    # get_picasa_album_listing method:
+    FLD_NAME = 0
+    FLD_URL = 1
+    FLD_IMAGEUNIQUEID = 2
+    FLD_DISTANCE = 3
+    FLD_EV = 4
+    FLD_EXPOSURE = 5
+    FLD_FLASH = 6
+    FLD_FOCALLENGTH = 7
+    FLD_FSTOP = 8
+    FLD_ISO = 9
+    FLD_MAKE = 10
+    FLD_MODEL = 11
+    FLD_TIME = 12
+    FLD_ALBUM = 13
+
+
     def __init__(self, dry_run=False):
         """
         Arguments:
@@ -76,7 +95,8 @@ class GoogleCLHelper(object):
             printer.p ("googlecl command: %s" % self.cmd)
 
         # See if they have given `google' authorization before:
-        print("Checking picasa authorization...")
+        print("Checking picasa authorization and getting album info...")
+        self.get_picasa_albums()
 
 
     def run_picasa_cmd(self, *args):
@@ -109,18 +129,23 @@ from the command line and follow the instructions to authorize `{0:s}' on this c
 
         return ([a[0] for a in self.albums], [a[1] for a in self.albums])
 
+
     def get_picasa_album_listing(self, album):
-        "get album listing. caching is not used. returns a 2-tuple with (filenames, urls)"
+        """get album listing. caching is not used.
+        returns a list of tuples of the form:
+        (name, url, imageUniqueID, distance, ev, exposure, flash, focallength, fstop, iso, make, model, time, album)
+        You can use the FLD_... symbolic index constants defined in this class for easy access to the data."""
         if album not in self.get_picasa_albums()[0]:
             return None
 
-        retval = self.run_picasa_cmd("list", album)
-        l = [a.split(',') for a in retval.decode('ascii').split('\n')]
+        retval = self.run_picasa_cmd("list", "--title", album,
+                                     "--fields", "name,url,imageUniqueID,distance,ev,exposure,flash,focallength,fstop,iso,make,model,time")
+        l = [a.split(',') + [album] for a in retval.decode('ascii').split('\n')] # we tack on the album for good, no great, measure
         try:
-            l.remove([''])
+            l.remove([''] + [album])
         except:
             pass
-        return ([a[0] for a in l], [a[1] for a in l])
+        return [tuple(ls) for ls in l]
 
     def upload_file_to_picasa_album(self, remote_album, f):
         if remote_album not in self.get_picasa_albums()[0]:
@@ -170,6 +195,7 @@ class PicasaSync(object):
                 else:
                     raise PicasaSyncError("""The remote album %s was not found. Your remote albums:
 %s
+
 Alternatively, you can use the -c option to automatically create any albums that don't exist"""
                       % (remote, "\n".join(albums)))
 
@@ -190,7 +216,7 @@ Alternatively, you can use the -c option to automatically create any albums that
         remoteinfo = {}
         for remote in self.remotes:
             print('Getting remote listing of picasa album %s...' % remote)
-            remote_files_in_album = self.cl.get_picasa_album_listing(remote)[0]
+            remote_files_in_album = self.cl.get_picasa_album_listing(remote)[FLD_NAME]
             remotefiles += remote_files_in_album
             remoteinfo[remote] = {'remotefiles': remote_files_in_album}
 
@@ -243,6 +269,39 @@ photos (and the provided albums already contain {1:,d} photos).""".format(len(fi
             self.cl.upload_file_to_picasa_album(*f)
         # eo upload_everything_in_queue
 
+    def deduper(self):
+        """
+        Interactively de-dupes picasa albums
+        """
+        allremotefiles = []
+        for remote in self.remotes:
+            allremotefiles += self.cl.get_picasa_album_listing(remote)
+
+        pic_ids = set()
+        possible_dupes = set()
+        for f in allremotefiles:
+            pic_id = f[GoogleCLHelper.FLD_IMAGEUNIQUEID]
+            if pic_id in pic_ids:
+                possible_dupes.add(pic_id)
+            else:
+                pic_ids.add(pic_id)
+
+        if len(possible_dupes) > 0:
+            dupes_str = 'Found %d possible duplicates' % len(possible_dupes)
+            print(dupes_str)
+            print('=' * (len(dupes_str) + 1))
+            for pic_id in possible_dupes:
+                print('These could be dupes [exif id=%s]:' % pic_id)
+                for f in allremotefiles:
+                    if f[GoogleCLHelper.FLD_IMAGEUNIQUEID] == pic_id:
+                        print('%s, %s, %s'
+                              % (f[GoogleCLHelper.FLD_NAME], f[GoogleCLHelper.FLD_ALBUM], f[GoogleCLHelper.FLD_URL]))
+                print ('')
+        else:
+            print ('No duplicates detected')
+
+        # eo deduper
+
 class PicasaSyncError(BaseException):
     quiet = False
     value = None
@@ -259,24 +318,34 @@ class PicasaSyncError(BaseException):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=PicasaSync.__doc__,
                                      epilog="by Mitchel Humpherys <mitch.special@gmail.com>")
-    parser.add_argument('local', help="Local directory you'd like to sync")
     parser.add_argument('remote', nargs="+",
-                        help="""Remote album(s) to which you'd like to sync.
-                        (Note, each remote album can only hold up to 1,000 photos, so if you
-                        will be uploading more than this you should supply several albums here)""")
+                        help="""Remote album(s) which you'd like to act on (sync or de-dupe).
+                        Note: each remote album can only hold up to 1,000 photos, so you should
+                        enough albums here to accomodate the number of photos you'll be uploading.""")
+    parser.add_argument('-dd', '--de-dupe', action='store_true', help='Run the de-duper on remote album')
     parser.add_argument('-d', '--dry-run', action='store_true',
                         help="Only print what we would sync, don't actually sync")
     parser.add_argument('-c', action='store_true', dest='create_needed',
                         help="Create albums that don't exist")
     parser.add_argument('-v', '--verbose', action='store_true',
                         help="Be verbose")
+    parser.add_argument('--local',
+                        help="""Local directory you'd like to sync [Default='%s'].
+                        This argument is ignored when running the de-duper.""" % os.curdir,
+                        default=os.curdir, metavar='local_dir')
 
     args = parser.parse_args()
 
+    # set up the global verbose logging mechanism:
     printer = Printer(args.verbose)
 
+    if args.de_dupe: args.local = os.curdir
     try:
-        PicasaSync(args.local, args.remote, dry_run=args.dry_run, create_needed=args.create_needed).run()
+        p = PicasaSync(args.local, args.remote, dry_run=args.dry_run, create_needed=args.create_needed)
+        if args.de_dupe:
+            p.deduper()
+        else:
+            p.run()
     except PicasaSyncError as e:
         if not e.quiet:
             print('\nError:')
