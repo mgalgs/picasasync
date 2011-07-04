@@ -1,18 +1,27 @@
 picasasync is a simple utility that allows you sync local directories
-containing digital photos to your picasa albums in the cloud.
+containing digital photos to your picasa albums in the cloud. It also
+lets you find and manage possible duplicate images stored in your
+picasa albums.
 
 
-usage: picasasync.py [-h] [-d] [-v] local remote
+usage: picasasync.py [-h] [-dd] [-d] [-c] [-v] [--local local_dir]
+                     remote [remote ...]
 
-Sync directories with picasa
+Sync local directories with picasa
 
 positional arguments:
-  local          Local directory you'd like to sync
-  remote         Remote album to which you'd like to sync
+  remote             Remote album(s) which you'd like to act on (sync or de-
+                     dupe). Note: each remote album can only hold up to 1,000
+                     photos, so you should enough albums here to accomodate
+                     the number of photos you'll be uploading.
 
 optional arguments:
-  -h, --help     show this help message and exit
-  -d, --dry-run  Only print what we would sync, don't actually sync
-  -v, --verbose  Be verbose
+  -h, --help         show this help message and exit
+  -dd, --de-dupe     Run the de-duper on remote album
+  -d, --dry-run      Only print what we would sync, don't actually sync
+  -c                 Create albums that don't exist
+  -v, --verbose      Be verbose
+  --local local_dir  Local directory you'd like to sync [Default='.']. This
+                     argument is ignored when running the de-duper.
 
 by Mitchel Humpherys <mitch.special@gmail.com>
