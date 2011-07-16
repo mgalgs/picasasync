@@ -9,6 +9,7 @@ import sys
 import os
 import argparse
 import subprocess
+from datetime import date
 
 googleclcmd = "google"
 # case insensitive:
@@ -78,7 +79,9 @@ class GoogleCLHelper(object):
     FLD_MAKE = 10
     FLD_MODEL = 11
     FLD_TIME = 12
+    # These two get tacked on manually:
     FLD_ALBUM = 13
+    FLD_CONVERTEDDATE = 14
 
 
     def __init__(self, dry_run=False):
@@ -140,12 +143,20 @@ from the command line and follow the instructions to authorize `{0:s}' on this c
 
         retval = self.run_picasa_cmd("list", "--title", album,
                                      "--fields", "name,url,imageUniqueID,distance,ev,exposure,flash,focallength,fstop,iso,make,model,time")
-        l = [a.split(',') + [album] for a in retval.decode('ascii').split('\n')] # we tack on the album for good, no great, measure
+        l = [a.split(',') for a in retval.decode('ascii').split('\n')] # we tack on the album for good, no great, measure
         try:
-            l.remove([''] + [album])
+            l.remove([''])
         except:
             pass
-        return [tuple(ls) for ls in l]
+        ret = []
+        nonecnt = 0
+        for ls in l:
+            datetaken = date.fromtimestamp(float(ls[GoogleCLHelper.FLD_TIME])/1000) \
+                        if ls[GoogleCLHelper.FLD_TIME] != 'None' else None
+            if ls[GoogleCLHelper.FLD_TIME] == 'None': nonecnt += 1
+            ret.append(tuple(ls + [album, datetaken]))
+        printer.p('there were %d items in the album %s that had no date' % (nonecnt, album))
+        return ret
 
     def upload_file_to_picasa_album(self, remote_album, f):
         if remote_album not in self.get_picasa_albums()[0]:
@@ -212,14 +223,18 @@ Alternatively, you can use the -c option to automatically create any albums that
                 files.append(fullfilename)
 
         # all files in all remote albums:
-        remotefiles = []
+        allremotefiles = []
+        remotefilenamesforsearching = []
         remoteinfo = {}
         for remote in self.remotes:
             print('Getting remote listing of picasa album %s...' % remote)
-            remote_files_in_album = self.cl.get_picasa_album_listing(remote)[FLD_NAME]
-            remotefiles += remote_files_in_album
-            remoteinfo[remote] = {'remotefiles': remote_files_in_album}
+            listing = self.cl.get_picasa_album_listing(remote)
+            remotefilenamesforsearching += [l[GoogleCLHelper.FLD_NAME] for l in listing]
+            allremotefiles += listing
+            remoteinfo[remote] = {'remotefiles': listing}
 
+        # for f in allremotefiles:
+        #     print (f)
 
         remoteiter = iter(self.remotes)
         current_remote = next(remoteiter)
@@ -233,10 +248,19 @@ Alternatively, you can use the -c option to automatically create any albums that
                           % (f, extension, ', '.join(allowed_extensions)))
                 ext_skip_cnt += 1
                 continue
-            if basename in remotefiles:
-                printer.p("%s is already in one of the remote albums" % f)
-                ja_skip_cnt += 1
-                continue
+            if basename in remotefilenamesforsearching:
+                skipplz = False
+                for rfile in allremotefiles:
+                    if rfile[GoogleCLHelper.FLD_NAME] == basename \
+                           and date.fromtimestamp(os.path.getmtime(f)) == \
+                           rfile[GoogleCLHelper.FLD_CONVERTEDDATE]:
+                        printer.p(("Skipping %s because there's already a file "+
+                                   "with that name and date in the remote album!") % f)
+                        skipplz = True
+                        break
+                if skipplz:
+                    ja_skip_cnt += 1
+                    continue
 
             if len(remoteinfo[current_remote]['remotefiles']) >= NUM_REMOTE_FILES_IN_ALBUM:
                 try:
@@ -244,7 +268,7 @@ Alternatively, you can use the -c option to automatically create any albums that
                 except StopIteration:
                     raise PicasaSyncError("""Not enough room in those picasa albums to store all of those photos...
 You are trying to upload {0:,d} files but each picasa album can only store 1,000
-photos (and the provided albums already contain {1:,d} photos).""".format(len(files), len(remotefiles)))
+photos (and the provided albums already contain {1:,d} photos).""".format(len(files), len(allremotefiles)))
 
 
             remoteinfo[current_remote]['remotefiles'].append(basename)
@@ -329,7 +353,7 @@ if __name__ == '__main__':
                         help="Create albums that don't exist")
     parser.add_argument('-v', '--verbose', action='store_true',
                         help="Be verbose")
-    parser.add_argument('--local',
+    parser.add_argument('-l', '--local',
                         help="""Local directory you'd like to sync [Default='%s'].
                         This argument is ignored when running the de-duper.""" % os.curdir,
                         default=os.curdir, metavar='local_dir')
